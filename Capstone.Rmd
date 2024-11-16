@@ -1,0 +1,1461 @@
+---
+title: "**Capstone Project: Exploring Crime Patterns and Predictions in Philadelphia Through Machine Learning**"
+subtitle: "For the Requirement of *HarvardX: PH125.9x Data Science: Capstone Course*"
+author: "Guler Arsal"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+   bookdown::pdf_document2: # bookdown for cross-referencing
+    df_print: kable
+    toc: TRUE
+    toc_depth: 4
+    number_sections: TRUE
+    fig_caption: TRUE
+header-includes:
+  - \usepackage{caption}
+  - \usepackage[nottoc]{tocbibind} # Exclude "Contents" from the TOC
+  - \captionsetup[table]{textfont={it}, labelfont={bf}, singlelinecheck=false, labelsep=newline} # Table caption settings
+  - \captionsetup[figure]{labelfont={bf}} # Figure caption settings  
+fontsize: 11pt
+abstract: "This project aimed to develop a predictive model for crime types in Philadelphia, leveraging a robust dataset with over two million crime records from 2006 to 2017. Using both descriptive analytics and machine learning, this study investigated patterns in crime distribution and developed a Random Forest model to classify crime types based on key factors like time, location, and contextual variables. The analysis reveals the model’s ability to distinguish between classes, albeit with varying accuracy across categories, highlighting areas for model refinement. Key findings emphasize the model's strengths in capturing frequent crime types and identifying temporal and spatial patterns, yet underscore the challenges in accurately classifying all categories. \\clearpage"
+
+---
+
+\newpage
+
+\listoftables
+
+\newpage
+
+\listoffigures
+
+\newpage
+
+```{r setup, include=FALSE}
+# Load libraries
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(ggpubr)
+library(lubridate)
+library(stringr)
+library(scales)
+library(forcats)
+library(readr)
+library(reticulate)
+library(bookdown)
+library(VIM)
+library(viridis)
+library(RColorBrewer)
+library(sf)
+library(rpart)
+library(rpart.plot)
+library(zipcodeR)
+library(randomForest)
+library(smotefamily)
+library(themis)
+library(recipes)
+library(pROC)
+
+# Set global chunk options
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.align = "center", fig.pos = "H")
+
+# Set the global theme to theme_pubr
+theme_set(theme_pubr())
+
+# Define a custom theme 
+custom_theme <- theme(
+  axis.text = element_text(size = rel(0.70)),
+  axis.title = element_text(size = rel(0.85)),
+  axis.text.y = element_text(hjust = 1))
+```
+
+# Introduction
+Understanding patterns in criminal activity is essential for developing strategies that enhance public safety and optimize resource allocation (Chainey & Ratcliffe, 2013). This project leverages the Philadelphia Crime Dataset to construct a machine learning model that predicts the type of crime based on factors such as location, time, and additional contextual variables. Using predictive modeling to anticipate crime types can enable law enforcement agencies to identify high-risk areas, anticipate crime trends, and make data-informed decisions, all of which can contribute to preventing incidents and improving urban safety measures (Perry et al., 2013).
+
+\vspace{12pt} 
+
+Machine learning techniques have become increasingly valuable in crime analysis, as they provide robust methods to detect complex, often hidden patterns within large datasets (Ahmed et al., 2021). Predictive models not only classify crime types but also support proactive policing efforts, guiding the allocation of resources where they are most needed and maximizing the efficacy of public safety initiatives (Kang & Kang, 2017).
+
+\vspace{12pt} 
+
+The Philadelphia Crime Dataset, sourced from Kaggle (a prominent platform that curates real-world datasets), is an extensive collection of over two million crime reports spanning from 2006 to 2017. Each record captures detailed attributes of a crime event, including date, time, geographic coordinates, and specific crime category. Analyzing these features provides a foundation for building predictive models that can offer valuable insights into the temporal and spatial dynamics of crime in Philadelphia.
+
+\vspace{12pt} 
+
+This project has three primary objectives: 
+
+1. **Exploration:** To investigate crime patterns in Philadelphia through descriptive analytics, uncovering trends by location and time.
+
+2. **Prediction**: To develop a machine learning model that predicts crime types based on factors like time and location.
+
+3. **Evaluation**: To assess the model’s performance, identifying key features that contribute most to accurate crime classification. 
+
+\newpage
+
+# Method
+
+## Philadelphia Crime Dataset Overview
+The Philadelphia Crime Dataset is a publicly accessible resource that provides a detailed record of crime incidents in Philadelphia. Each incident is recorded with distinct attributes, such as date, time, location (latitude and longitude), and type of crime. The dataset’s structure and level of detail make it suitable for a variety of analytical applications. 
+
+\vspace{12pt} 
+
+For this project, the dataset will be used to train and test machine learning models that predict crime types based on spatiotemporal factors. In Table \@ref(tab:tab1) below, a comprehensive description of the dataset’s variables is provided.
+
+\vspace{12pt} 
+
+```{r dataset, eval = TRUE, results = "hide"}
+# Download Philadelphia Crime Dataset from KAGGLE
+# Kaggle is a Python package (not R package), so I need to install and use it via Python 
+
+# Install the reticulate package in R 
+# install.packages("reticulate")
+
+# Install Python from R
+# reticulate::install_python()
+
+# Check Python configuration
+# py_config()
+
+# Before installing Kaggle, make sure to set up your Kaggle API key
+# Step 1: Get your API Key (Go to Kaggle's Account Page, Under the API section, click Create New API Token. This will download a kaggle.json file)
+# Step 2: Place the API Key (Move the kaggle.json file to the folder C:/Users/<Your Username>/.kaggle/ )
+
+# Install the kaggle Python package
+# py_install("kaggle")
+
+# Import the Kaggle API extended module
+kaggle_api <- import("kaggle.api.kaggle_api_extended", convert = TRUE)
+
+# Run Kaggle CLI command to download dataset
+system("kaggle datasets download -d mchirico/philadelphiacrimedata -p data --unzip")
+
+# Load the CSV file into R
+df <- read_csv("data/crime.csv")
+```
+ 
+```{r tab1}
+# Create the data frame with the added Category column
+crime_data <- data.frame(
+    Variable = c(
+        "Dc_Dist", "Psa", "Dispatch_Date_Time", "Dispatch_Date", 
+        "Dispatch_Time", "Hour", "Dc_Key", "Location_Block", 
+        "UCR_General", "Text_General_Code", "Police_Districts", 
+        "Month", "Lon", "Lat"),
+    Description = c(
+        "District Code of the crime occurred",
+        "Police Service Area code, which further divides a district for local policing",
+        "The date and time when the crime dispatch occurred",
+        "The date of the crime dispatch",
+        "The time of the crime dispatch (hours and minutes)",
+        "Hour of the day",
+        "A unique identifier for each crime incident",
+        "The block location where the crime occurred",
+        "Uniform Crime Reporting General category code, used to classify crimes",
+        "A textual general code for the type of crime",
+        "The police district where the crime occurred",
+        "The month of the dispatch",
+        "Longitude of the crime location",
+        "Latitude of the crime location"),
+    Category = c(
+        "Spatial", "Spatial", "Temporal", "Temporal", 
+        "Temporal", "Temporal", "Crime Type", "Spatial", 
+        "Crime Type", "Crime Type", "Spatial", 
+        "Temporal", "Spatial", "Spatial")
+)
+
+# Generate a table 
+kbl(crime_data, 
+    format = 'latex', 
+    booktabs = TRUE, 
+    caption = "Summary of Variables in Philadelphia Crime Dataset",
+    linesep = "\\addlinespace[12pt]",
+    col.names = c("Variable Name", "Description", "Category")) %>%
+  kable_styling(latex_options = c("HOLD_position"),
+                position = "left", 
+                stripe_color = "gray!15", 
+                font_size = 11, 
+                full_width = TRUE) %>%
+  column_spec(1, width = "3.5cm") %>%  
+  column_spec(2, width = "9cm") %>%
+  column_spec(3, width = "2.5cm") %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Missing values 
+The completeness of the Philadelphia Crime Dataset was analyzed, specifically examining the presence of missing data across its 14 variables. Among these, 10 variables display full data integrity, containing no missing entries. However, four variables exhibit some degree of missing data, as detailed in Table \@ref(tab:tab2). Notably, the proportion of missing data in these variables remains minimal, with the highest missing percentage being slightly above 0.89%.
+
+\vspace{12pt} 
+
+```{r tab2}
+# Calculate and filter the number of missing values
+# Print the filtered table using kable
+kable(
+  data.frame(
+    Column = names(df),
+    Missing_Values = colSums(is.na(df)),
+    Percentage = round((colSums(is.na(df)) / nrow(df)) * 100, 2)
+  ) %>%
+    filter(Missing_Values > 0),
+  format = 'latex',
+  booktabs = TRUE,
+  caption = "Number and Percentage of Missing Values in Columns",
+  linesep = "\\addlinespace[12pt]",
+  col.names = c("Variable Name", "Missing Values", "Percentage (%)"),
+  row.names = FALSE
+) %>%
+  kable_styling(
+    latex_options = c("HOLD_position"),
+    position = "left",
+    stripe_color = "gray!15",
+    font_size = 11,
+    full_width = FALSE
+  ) %>%
+  row_spec(0, bold = TRUE)
+```
+
+## Software and Tools
+All analyses were conducted using R version 4.4.1, a comprehensive software environment developed by the R Foundation for Statistical Computing, renowned for its robust data analysis and visualization capabilities (R Core Team, 2024). The report was compiled using R Markdown within RStudio, an integrated development environment specifically designed for R programming (RStudio Team, 2024). Both R and RStudio are open-source applications freely available to the public. 
+
+\newpage
+
+# Exploratory Data Analysis
+
+## Crime Type 
+Figure \@ref(fig:fig1) presents the distribution of crime types in Philadelphia using horizontal bar plots, arranged with the most frequent crimes at the top and the least frequent at the bottom. It offers a comprehensive overview of 33 distinct categories of criminal activity, highlighting the relative prevalence of each type.
+
+\vspace{12pt} 
+
+```{r fig1, fig.cap="Number of Crimes by Crime Type", fig.height = 6.8, fig.width = 6.5}
+# Distribution of Number of Crimes by Crime Type
+ggplot(df %>% 
+        filter(!is.na(Text_General_Code)),  # Filter out NA values in Text_General_Code
+       aes(x = fct_rev(fct_infreq(Text_General_Code)), fill = after_stat(count))) +  # Ordered
+  geom_bar() +
+  coord_flip() +  # Flip the axes for horizontal bars
+  labs(x = "Crime Type", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_fill_viridis(option = "viridis", direction = -1, guide = "none") +  # Apply viridis palette
+  theme(axis.text.y = element_text(size = 7),  # Set y-axis text size smaller
+        legend.position = "none") +  # Hide legend
+  custom_theme
+```
+
+At the top of the distribution, "All Other Offenses" emerges as the most frequent crime, followed closely by "Other Assaults" and "Thefts." These categories account for a significant portion of Philadelphia's overall crime rates, a pattern consistent with findings from other urban studies, where assaults and theft-related offenses dominate the crime landscape (Malleson & Andresen, 2016).    
+
+\vspace{12pt} 
+
+Mid-range crimes, including "Vandalism/Criminal Mischief," "Theft from Vehicle," and "Narcotic/Drug Law Violations," reflect common urban challenges. These offenses are often linked to socioeconomic factors, such as poverty and inequality, that contribute to property damage, vehicle theft, and drug-related activities (Wikström & Treiber, 2016).    
+
+\vspace{12pt} 
+
+At the lower end of the spectrum, rarer but more severe crimes like "Homicide - Criminal" and "Homicide - Gross Negligence" are observed. These crimes occur less frequently but have significant social and legal consequences. Due to their severity, these violent crimes tend to draw more attention, reflecting national patterns where offenses such as homicide, though rare, are central to public and policy discussions (Daly & Wilson, 2017).   
+
+### Thematic Organization of Crime Types
+The crime categories can be thematically organized into five distinct groups to facilitate a clearer understanding of their characteristics and implications. 
+
+1. Other Offenses: This category includes offenses that do not fit neatly into other classifications, comprising:
+      - All Other Offenses
+      - Other Assaults
+      - Other Sex Offenses (Not Commercialized)
+
+
+2. Property Crimes: This group encompasses a wide range of offenses aimed at property, reflecting the impact of crime on individuals and communities through financial loss and property damage. It includes:
+      - Thefts
+      - Vandalism/Criminal Mischief
+      - Theft from Vehicle
+      - Fraud
+      - Recovered Stolen Motor Vehicle
+      - Burglary Residential
+      - Motor Vehicle Theft
+      - Burglary Non-Residential
+      - Arson
+      - Forgery and Counterfeiting
+      - Embezzlement
+      - Receiving Stolen Property
+      
+\newpage
+
+3. Drug and Alcohol-Related Crimes: This category addresses offenses associated with substance abuse, underscoring societal concerns related to addiction and public safety. It includes:
+      - Narcotic / Drug Law Violations
+      - Driving Under the Influence
+      - Liquor Law Violations
+      - Public Drunkenness
+      
+
+4. Crimes Against Public Order and Safety: This group encompasses offenses that disrupt community harmony and public safety, including:
+      - Disorderly Conduct
+      - Weapon Violations
+      - Prostitution and Commercialized Vice
+      - Vagrancy/Loitering
+      - Gambling Violations
+
+
+5. Violent Crimes: This category includes serious offenses that threaten personal safety and involve physical harm. It consists of:
+      - Aggravated Assault No Firearm
+      - Robbery No Firearm
+      - Robbery Firearm
+      - Aggravated Assault Firearm
+      - Rape
+      - Homicide - Criminal
+      - Offenses Against Family and Children
+      - Homicide - Justifiable
+      - Homicide - Gross Negligence
+
+```{r crime_type}
+# Define other offenses crime types
+other_offenses <- c(
+  "All Other Offenses", 
+  "Other Assaults", 
+  "Other Sex Offenses (Not Commercialized)")
+
+# Define property crime types
+property_crimes <- c(
+  "Thefts", 
+  "Vandalism/Criminal Mischief", 
+  "Theft from Vehicle",   
+  "Motor Vehicle Theft",
+  "Fraud", 
+  "Recovered Stolen Motor Vehicle", 
+  "Burglary Residential", 
+  "Burglary Non-Residential", 
+  "Arson", 
+  "Forgery and Counterfeiting", 
+  "Embezzlement", 
+  "Receiving Stolen Property")
+
+# Define the drug and alcohol-related crime types
+drug_alcohol_crimes <- c(
+  "Narcotic / Drug Law Violations", 
+  "DRIVING UNDER THE INFLUENCE", 
+  "Liquor Law Violations", 
+  "Public Drunkenness")
+
+# Define the crimes against public order and safety
+public_order_crimes <- c(
+  "Disorderly Conduct", 
+  "Weapon Violations", 
+  "Gambling Violations",
+  "Prostitution and Commercialized Vice", 
+  "Vagrancy/Loitering")
+
+# Define the violent crime types
+violent_crimes <- c(
+  "Aggravated Assault No Firearm", 
+  "Aggravated Assault Firearm", 
+  "Robbery No Firearm", 
+  "Robbery Firearm",  
+  "Offenses Against Family and Children",   
+  "Rape", 
+  "Homicide - Gross Negligence", 
+  "Homicide - Justifiable",
+  "Homicide - Criminal" )
+
+# Create a new variable called "type" 
+df <- df %>%
+  mutate(crime_type = case_when(
+    Text_General_Code %in% other_offenses ~ "Other Offenses",
+    Text_General_Code %in% property_crimes ~ "Property Crimes",
+    Text_General_Code %in% drug_alcohol_crimes ~ "Drug and Alcohol-Related Crimes",
+    Text_General_Code %in% public_order_crimes ~ "Crimes Against Public Order",
+    Text_General_Code %in% violent_crimes ~ "Violent Crimes"))                 
+```
+
+
+## Temporal Crime Analysis
+```{r temporal}
+# Extract month (as label), year, and minute from Dispatch_Date_Time
+df <- df %>% mutate(
+  Month_label = factor(month(Dispatch_Date_Time, label = TRUE, abbr = TRUE)),
+  year = year(Dispatch_Date_Time), 
+  month = month(Dispatch_Date_Time),
+  day = mday(Dispatch_Date_Time),       # Day of the month from 1 to 31
+  weekday = wday(Dispatch_Date_Time, week_start = 1) # Numeric day of the week (1 = Monday)
+)
+```
+The dataset has been enriched with several temporal features derived from the *Dispatch_Date_Time* variable. The month has been extracted as a label (e.g., "Jan," "Feb"), and both the year and numeric month values have been added as separate columns. Additionally, the day of the month and the day of the week (with Monday as 1 and Sunday as 7) have been extracted. These new features enable a more detailed analysis of crime trends across different time periods.
+
+### Crime Date    
+Figure \@ref(fig:fig2) presents a line plot depicting the daily distribution of reported crimes. The black dashed line represents a LOESS smoothing curve, highlighting the overall trend in crime rates over time. From 2006 to 2017, the trend indicates a gradual decline in the number of reported crimes.
+
+\newpage
+```{r fig2, fig.cap="Number of Crimes by Crime Date", fig.height = 4, fig.width = 8}
+# Grouping by Dispatch_Date to get counts  & Plot using ggplot 
+df %>% 
+  group_by(Dispatch_Date) %>% 
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(Dispatch_Date, n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed") + 
+  labs(x = "Crime Date", y = "Number of Crimes") +
+  geom_vline(xintercept = as.Date(c("2005-12-25", "2006-12-25", "2007-12-25", "2008-12-25", "2009-12-25",
+                                    "2010-12-25", "2011-12-25", "2012-12-25", "2013-12-25", "2014-12-25",
+                                    "2015-12-25", "2016-12-25", "2017-12-25")), # Adding vertical lines to highlight Christmas
+             color = "red", linetype = "dotted") +
+  annotate("text", x = as.Date("2016-12-25"), y = 900, label = "Christmas Day", 
+           color = "red", angle = 90, vjust = -0.7, hjust = 0.9, size = 3) +
+  custom_theme
+```
+
+\vspace{12pt} 
+
+Seasonal fluctuations are evident, with recurring peaks and dips in crime rates throughout the year. Notably, there is a significant reduction in crime during the Christmas period, starting in mid-December and extending through the end of the month. This seasonal decline is marked by vertical red dashed lines indicating Christmas Day each year and may reflect behavioral, environmental, or social factors, such as increased community engagement or heightened security, that lead to a temporary reduction in criminal activity during the holiday season.
+
+\vspace{12pt}
+
+Additionally, the figure reveals a recurring pattern of crime peaking in the middle of each year, typically during the summer months. This suggests a seasonal trend, where crime rates tend to rise during warmer weather, potentially driven by increased outdoor activity and social interactions.
+
+\vspace{12pt} 
+
+### Crime Month    
+Figure \@ref(fig:fig3) presents a line plot depicting the monthly distribution of reported crimes. This figure highlights a gradual overall decline in crime rates from 2006 to 2017 and further emphasizes the seasonal fluctuations shown in Figure 1. Crime rates consistently peak during the middle of the year, particularly in the summer months, suggesting that warmer weather and increased outdoor activities may contribute to the rise in crime. Conversely, crime occurrences tend to be lower in the winter, especially around the Christmas period, as highlighted in Figure 1. 
+
+\vspace{12pt} 
+
+```{r fig3, fig.cap="Number of Crimes by Crime Month", fig.height = 4, fig.width = 8}
+# Grouping by Month to get counts & Plot using ggplot 
+df %>% mutate(Month = ym(Month)) %>%
+  group_by(Month) %>% 
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(Month, n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed", size = 0.8) + 
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%Y-%m") +  # Show every 12 months
+  scale_y_continuous(labels = comma) +
+  custom_theme
+```
+
+To gain a deeper understanding of crime trends, the analysis focused on monthly data for individual offense categories, allowing for the identification of detailed patterns that may be obscured in the aggregate data. By disaggregating the data, trends within specific crime types were examined, offering insights into the fluctuations and variations that occur over time. This approach helps pinpoint areas where crime prevention efforts may have been effective or where unusual patterns could warrant further investigation.
+
+\vspace{12pt} 
+
+Figures \@ref(fig:fig4) through \@ref(fig:fig8) present the monthly trends for various crime categories. These figures highlight the fluctuations in crime rates, shedding light on how specific offenses evolve over time. By focusing on these individual crime types, we can better understand their seasonal variations and potentially identify the impact of external factors, such as law enforcement strategies or socio-economic conditions, on crime trends.
+
+\vspace{12pt} 
+
+Figure \@ref(fig:fig4) illustrates the monthly trends for the **Other Offenses** category, which includes crime types such as "All Other Offenses," "Other Assaults," and "Other Sex Offenses (Not Commercialized)." These categories generally show a decline in crime rates, consistent with the broader downward trends observed in the overall data. Similar to the seasonal fluctuations seen in the aggregated data, "All Other Offenses" and "Other Assaults" categories also peak during the warmer months and decrease in the winter.
+
+```{r fig4, fig.cap="Number of Crimes by Crime Month for Other Crimes", fig.height = 7.2, fig.width = 8}
+df %>%
+  mutate(Month = ym(Month)) %>%
+  filter(Text_General_Code %in% other_offenses) %>%
+  group_by(Month, Text_General_Code) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(x = Month, y = n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed", size = 0.6) + 
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~ Text_General_Code, scales = "free_y", nrow = 3, ncol = 1) +  
+  theme(strip.text = element_text(size = 8, face = "bold"),
+        strip.background = element_blank(),
+        panel.spacing = unit(0.5, "lines"),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +
+  custom_theme
+```
+
+Figure \@ref(fig:fig5) presents a series of line plots illustrating the monthly trends for **Property** crime categories. Most of these categories, such as "Vandalism/Criminal Mischief"  and "Burglary Non-Residential" show a clear downward trend in crime rates over time, reflecting a broader decline in property-related offenses. 
+
+\vspace{12pt} 
+
+In contrast, the "Fraud" category deviates from this general trend. The "Fraud" category exhibit relatively stable rates until around 2014, followed by a sharp increase in 2015. This sudden spike suggests that external factors, such as changes in economic conditions, policy shifts, or perhaps new opportunities for fraud (e.g., technological developments), may have played a role in the rise of these offenses. The anomaly in 2015 stands out as an area requiring further investigation to understand the underlying causes and to inform targeted crime prevention strategies for fraud.
+
+```{r fig5, fig.cap="Number of Crimes by Crime Month for Property Crimes", fig.height = 11, fig.width = 8}
+# Filter the data for the property crime types & Plot using ggplot
+df %>%
+  mutate(Month = ym(Month)) %>%
+  filter(Text_General_Code %in% property_crimes) %>%  # Use %in% to filter for multiple crime types
+  mutate(Text_General_Code = factor(Text_General_Code, levels = property_crimes)) %>%
+  group_by(Month, Text_General_Code) %>%  # Group by Dispatch_Date and Text_General_Code
+  summarise(n = n(), .groups = 'drop')  %>% # Drop grouping after summarising
+ggplot(aes(x = Month, y = n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed", size = 0.5) + 
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~ Text_General_Code, scales = "free_y", nrow = 6, ncol = 2) +  
+  theme(strip.text = element_text(size = 8, face = "bold"),
+        strip.background = element_blank(),  # Remove background to make it look narrower
+        panel.spacing = unit(0.5, "lines"),  # Adjust spacing between panels if needed
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +  # Set y-axis text size smaller
+  custom_theme
+```
+
+Figure \@ref(fig:fig6) displays a series of line plots depicting the monthly trends for **Drug and Alcohol-Related** crimes. Categories such as "Narcotic / Drug Law Violations," "Driving Under the Influence," and "Liquor Law Violations" exhibit relatively similar patterns, with parallel fluctuations over time. In contrast, "Public Drunkenness" shows a slightly different trend, although the variation is minimal. It's important to note, however, that the number of occurrences for "Public Drunkenness" is lower compared to the other categories, which may account for the less pronounced trend.
+
+\vspace{12pt} 
+
+```{r fig6, fig.cap="Number of Crimes by Crime Month for Drug and Alcohol-Related Crimes", fig.height = 8.8, fig.width = 8}
+# Filter the data for drug and alcohol-related crimes & Plot using ggplot
+df %>%
+  mutate(Month = ym(Month)) %>%
+  filter(Text_General_Code %in% drug_alcohol_crimes) %>%
+  mutate(Text_General_Code = factor(Text_General_Code, levels = drug_alcohol_crimes)) %>%
+  group_by(Month, Text_General_Code) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(x = Month, y = n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed", size = 0.5) + 
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~ Text_General_Code, scales = "free_y", nrow = 4, ncol = 1) +  
+  theme(strip.text = element_text(size = 8, face = "bold"),
+        strip.background = element_blank(),
+        panel.spacing = unit(0.5, "lines"),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +
+  custom_theme
+```
+
+Figure \@ref(fig:fig7) displays the line plots for **Crimes Against Public Order and Safety**. "Disorderly Conduct" shows clear downward trends over time. Similarly, "Weapon Violations" also exhibit a general decline; however, there is a noticeable uptick in rates following 2013, suggesting a potential resurgence in these types of offenses. "Gambling Violations", though generally low in frequency, show a gradual decline, while "Prostitution and Commercialized Vice" exhibit significant fluctuations with occasional sharp spikes. Despite this variability, there is a slight downward trend in prostitution-related crimes. In contrast, "Vagrancy/Loitering" stands out due to its sharp spike around 2015. 
+
+```{r fig7, fig.cap="Number of Crimes by Crime Month for Crimes Against Public Order and Safety", fig.height = 8.3, fig.width = 8}
+# Filter the data for public order crimes & Plot using ggplot
+df %>%
+  mutate(Month = ym(Month)) %>%
+  filter(Text_General_Code %in% public_order_crimes) %>%
+  mutate(Text_General_Code = factor(Text_General_Code, levels = public_order_crimes)) %>%
+  group_by(Month, Text_General_Code) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(x = Month, y = n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed", size = 0.5) + 
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~ Text_General_Code, scales = "free_y", nrow = 5, ncol = 1) +  
+  theme(strip.text = element_text(size = 8, face = "bold"),
+        strip.background = element_blank(),
+        panel.spacing = unit(0.5, "lines"),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +
+  custom_theme
+```
+
+Figure \@ref(fig:fig8) displays a series of line plots depicting the monthly trends for **Violent** crimes. Both "Aggravated Assault" categories (firearm and non-firearm) and both "Robbery" categories (with and without firearms) exhibit a clear downward trend, with seasonal spikes typically occurring in the summer months. 
+
+\vspace{12pt} 
+
+```{r fig8, fig.cap="Number of Crimes by Crime Month for Violent Crimes", fig.height = 9.2, fig.width = 8}
+# Filter the data for violent crimes & Plot using ggplot
+df %>%
+  mutate(Month = ym(Month)) %>%
+  filter(Text_General_Code %in% violent_crimes) %>%
+  mutate(Text_General_Code = factor(Text_General_Code, levels = violent_crimes)) %>%
+  group_by(Month, Text_General_Code) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(x = Month, y = n)) +
+  geom_line(color = "#1f78b4") +
+  geom_smooth(aes(y = n), method = "loess", se = FALSE, color = "black", linetype = "dashed", size = 0.5) + 
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~ Text_General_Code, scales = "free_y", nrow = 5, ncol = 2) +  
+  theme(strip.text = element_text(size = 8, face = "bold"),
+        strip.background = element_blank(),
+        panel.spacing = unit(0.5, "lines"),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8)) +
+  custom_theme
+```
+
+"Offenses Against Family and Children" exhibit fluctuations but no long-term trend, while "Rape" shows a more distinct downward trend, particularly in the later years. 
+
+\vspace{12pt}
+
+"Homicide - Gross Negligence", although rare, shows a clear spike around 2014-2015, potentially indicating an isolated event or a change in reporting during this time period. "Homicide - Justifiable" remains low throughout the period, with no discernible trend."Homicide - Criminal" remains relatively stable, without a clear upward or downward trend, suggesting that the factors influencing this crime type may differ from those affecting robbery or aggravated assault.
+
+\vspace{12pt} 
+
+Overall, the downward trends in many of these categories reflect broader crime reduction patterns, though certain anomalies, like the spike in gross negligence homicides, warrant further investigation.
+
+### Monthly Aggregates    
+Figure \@ref(fig:fig9) presents a bar plot that aggregates crime data for each month, without distinguishing between specific years. The x-axis represents the months (January to December), while the y-axis reflects the number of recorded incidents. The bar plot confirms the trend observed previously, with crime rates rising during the summer and declining in the winter. 
+
+\vspace{12pt} 
+
+February shows a notably lower frequency of crimes, which might be related to the fact that it has fewer days compared to other months, though this would require further investigation to confirm.
+
+\vspace{12pt} 
+
+```{r fig9, fig.cap="Number of Crime by Monthly Aggregation", fig.height = 4, fig.width = 8}
+# Bar plot that aggregates crime data for each month
+df %>%
+  count(Month_label) %>% 
+  ggplot(aes(x = Month_label, y = n, fill = n)) +  # Fill based on the count (n)
+  geom_bar(stat = "identity", color = "black") +
+  labs(x = "Crime Month", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_fill_viridis(option = "viridis", direction = -1, labels = scales::comma) +  # Use viridis palette
+  guides(fill = guide_colorbar(title = "Number of Crimes")) +  # Show the legend title
+  theme(legend.position = "right", 
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)) +  
+  custom_theme
+```
+
+\newpage
+
+### Crime Hour
+Figure \@ref(fig:fig10) shows a histogram of crime frequency by hour of the day, highlighting clear variations in crime activity. Crime peaks occur between 10 AM and 1 PM, with another rise in late afternoon. These periods likely coincide with increased public activity, such as work hours and commuting, suggesting that crimes may be more opportunistic when more people are out and about.
+
+\vspace{12pt} 
+
+In contrast, crime frequency drops significantly during the early morning hours, particularly from midnight to 6 AM. This period of low activity aligns with reduced public presence in urban areas, which may lower the likelihood of both crimes and their reporting during these quieter hours. The overall pattern reflects the rhythms of urban life, where higher crime rates occur during periods of greater social interaction and economic activity, while quieter hours see fewer opportunities for crime to take place or be reported.
+
+```{r fig10, fig.cap="Number of Crimes by Crime Hour", fig.height = 4, fig.width = 8}
+# Distribution of Number of Crimes by Crime Hour
+ggplot(df, aes(x = Hour)) +
+  geom_bar(aes(fill = after_stat(count)), color = "black") +  # Use geom_bar instead of geom_histogram
+  labs(x = "Crime Hour", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = seq(0, 23, by = 1)) +  # Show all hour numbers
+  scale_fill_viridis_c(option = "viridis", direction = -1, guide = "none") +  # Apply viridis color palette
+  custom_theme
+```
+
+To deepen the analysis, Figure \@ref(fig:fig11) introduces a line graph that incorporates year-wise data, illustrating the hourly distribution of crimes from 2006 to 2017. As with the previous figure, crime activity tends to be at its lowest during the early morning hours (midnight to 6 AM), with a steep decline from midnight. After 6 AM, there is a steady increase in crime frequency, peaking sharply between 3 PM and 6 PM.Post 6 PM, crime numbers gradually decrease, but with a noticeable rise between 10 PM and midnight, indicating late-night activity.
+
+\vspace{12pt} 
+
+The general pattern of crime activity remains consistent across years, though 2017 (yellow line) stands out with notably lower crime counts. However, this lower crime counts is largely influenced by incomplete data, as the dataset for 2017 only covers the months from January to March. The absence of data from the remaining months distorts the overall crime trend for 2017. Therefore, any conclusions drawn from this particular year must be interpreted with caution, as it does not offer a comprehensive picture of the entire year’s crime patterns.
+
+```{r fig11, fig.cap="Number of Crimes by Crime Hour for Each Year", fig.height = 4, fig.width = 8}
+# Distribution of Number of Crimes by Crime Hour (grouped by year)
+df %>% 
+  mutate(year = as.factor(year)) %>% 
+  group_by(year, Hour) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+ggplot(aes(Hour, n, color = year)) + 
+  geom_line(size = 1) + 
+  labs(x = "Hour of the Day", y = "Number of Crimes", color = NULL) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = seq(0, 23, by = 1)) +  # Show all hour numbers
+  scale_color_viridis(discrete = TRUE, option = "viridis") + # The default palette is viridis, but you can try different palettes such as "magma", "plasma", "inferno", and "cividis"
+  theme(legend.position = "right",legend.text = element_text(size = 8)) +
+  custom_theme
+```
+
+
+Figure \@ref(fig:fig12) illustrates the hourly distribution of crime types using a color scale from yellow to purple, highlighting crime frequency at different times of the day. 
+
+\vspace{12pt} 
+
+The results reveal clear temporal trends across Drug and Alcohol-Related crimes. "Driving Under the Influence" and "Public Drunkenness" show a sharp increase in frequency during the late evening and early morning hours (from around 10 PM to 3 AM), coinciding with common social activities and nightlife. This pattern is expected, as these crimes are often linked to alcohol consumption and nighttime behavior. "Narcotic / Drug Law Violations" and "Liquor Law Violations" exhibit a broader distribution throughout the day, peaking in the late afternoon and evening.
+
+\vspace{12pt} 
+
+Most of the Violent crimes, such as  "Aggravated Assault" (both firearm and non-firearm) and "Robbery" (both with and without firearms) categories peak between the evening and midnight hours, suggesting a higher likelihood of confrontations during the evening. 
+
+\vspace{12pt} 
+
+"Disorderly Conduct" follows a similar trend, with higher frequencies in the evening and nighttime, reflecting social tensions that may escalate during this period. "Homicide - Criminal" is most frequent in the late evening hours as well. 
+\vspace{12pt} 
+
+The Property crimes of "Thefts", "Theft from Vehicle", "Motor Vehicle Theft", "Forgery and Counterfeiting", "Fraud" and "Embezzlement" have a very similar distribution with one peak at around 4pm. Some other property crimes, such as "Burglary Residential" displays a dual peak, one in the early morning hours and another around 4pm.
+
+\vspace{12pt} 
+
+In summary, Figure \@ref(fig:fig12) highlights clear temporal trends in crime patterns, which can inform more effective resource allocation and crime prevention strategies based on time of day.
+
+
+```{r fig12, fig.cap="Number of Crimes by Crime Hour for Each Crime Type", fig.height = 11, fig.width = 8}
+# Distribution of Different Crime Types Over The Hours of The Day
+ggplot(df %>% 
+         filter(!is.na(Text_General_Code)) %>% 
+         mutate(Text_General_Code = factor(Text_General_Code)),  # Temporarily reorder crime types
+       aes(x = Hour, fill = after_stat(count))) +
+  geom_histogram(binwidth = 1, color = "black") +
+  labs(x = "Crime Hour", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = seq(0, 23, by = 2)) +  # Show all hour numbers
+  scale_fill_viridis(option = "viridis", direction = -1, guide = "none") +
+  facet_wrap(~ Text_General_Code, scales = "free_y", nrow = 11, ncol = 3) +  
+  theme(strip.text = element_text(size = 7, face = "bold"),
+        strip.background = element_blank(),  # Remove background to make it look narrower
+        panel.spacing = unit(0.5, "lines"),  # Adjust spacing between panels if needed
+        axis.text.y = element_text(size = 6)) +  # Set y-axis text size smaller
+  custom_theme
+```
+
+
+
+### Crime Weekday
+Figure \@ref(fig:fig13) illustrates the number of crimes that occurred on each day of the week. The data reveals that crime counts remain relatively high and consistent from Monday through Friday, with Tuesday and Wednesday showing the highest crime counts, each exceeding 330,000 incidents. Crime numbers start to decline slightly toward the weekend, with Sunday showing the lowest count. The lower crime activity on weekends may reflect differences in daily activities or law enforcement practices.
+
+```{r fig13, fig.cap="Number of Crime by Weekday", fig.height = 3.5, fig.width = 8}
+# Bar plot that aggregates crime data for each month
+df %>%  mutate(weekday = factor(wday(Dispatch_Date_Time, label = TRUE, abbr = TRUE))) %>% 
+  count(weekday) %>% 
+  ggplot(aes(x = weekday, y = n, fill = n)) +  # Fill based on the count (n)
+  geom_bar(stat = "identity", color = "black") +
+  labs(x = "Crime Weekday", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_fill_viridis(option = "viridis", direction = -1, labels = scales::comma) +  # Use viridis palette
+  guides(fill = guide_colorbar(title = "Number of Crimes")) +  # Show the legend title
+  theme(legend.position = "right", 
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10)) +  
+  custom_theme
+```
+
+
+## Spatial Crime Analysis 
+```{r boundaries, eval = TRUE, results = "hide"}
+# Downloading Police District Boundaries from opendataphilly.org
+# Set the URL for the GeoJSON file
+url <- "https://opendata.arcgis.com/datasets/62ec63afb8824a15953399b1fa819df2_0.geojson"
+# Specify the destination file path
+destfile <- "Boundaries_District.geojson"
+
+# Download the file
+download.file(url, destfile, mode = "wb")  # 'wb' is for binary mode
+
+# Read the GeoJSON file into an sf object
+boundary <- st_read("Boundaries_District.geojson")
+```
+
+To incorporate police district boundaries for mapping, a GeoJSON file from OpenDataPhilly.org was downloaded and loaded into R as a spatial object (see code snippet). During this process, discrepancies were identified between district codes in the dataset and those in the boundary file. Specifically, the dataset contained four additional district codes (4, 6, 23, and 92), which reflect earlier police district divisions before departmental restructuring. These districts were merged into others as follows:  
+
+- The old 4th District was merged into the 3rd District.    
+- The old 6th District was merged into the 9th District.    
+- The old 23rd District was merged into the 22nd District.   
+- The old 92nd District was merged into the 16th District.   
+
+To align with the current district boundaries, the Dc_Dist variable was updated to reflect these changes accurately, ensuring consistency between the dataset and boundary file for accurate spatial analysis.
+
+```{r}
+# Update the Dc_Dist variable to reflect district mergers
+df <- df %>%
+  mutate(Dc_Dist = case_when(
+    Dc_Dist == "04"  ~ "03",   # Merge old 4th District into 3rd
+    Dc_Dist == "06"  ~ "09",   # Merge old 6th District into 9th
+    Dc_Dist == "23" ~ "22",  # Merge old 23rd District into 22nd
+    Dc_Dist == "92" ~ "16",  # Merge old 92nd District into 16th
+    TRUE ~ Dc_Dist            # Keep all other values unchanged
+  ))
+```
+
+\vspace{12pt} 
+
+Figure \@ref(fig:fig14) illustrates a bar chart representing the distribution of crimes across different district codes. The results show that District 15 has the highest number of recorded crimes, exceeding 150,000 incidents, followed closely by District 09. District 24, 22, and 25 have significant crime rates as well. These districts show a substantial crime burden, indicating that they may encompass larger or more densely populated areas, or areas with higher crime incidence rates.
+
+```{r fig14, fig.cap="Number of Crimes by District Code", fig.height = 3.5, fig.width = 7}
+# Number of Crimes by District Code
+ggplot(df, aes(x = fct_infreq(Dc_Dist), fill = after_stat(count))) + # ordered
+  geom_bar(color = "black") +
+  labs(x = "District Code", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_fill_viridis(option = "viridis", direction = -1, guide = "none") + 
+  custom_theme
+```
+
+In contrast, the districts toward the right side of Figure \@ref(fig:fig14), such as District 77 and District 05, report the fewest number of crimes, each with less than 50,000 incidents. The drop-off in crime frequency between the left and right ends of the chart is visually stark, indicating that certain districts experience far fewer criminal activities compared to others.
+
+\newpage
+
+Figure \@ref(fig:fig15) shows a map of Philadelphia with district boundaries outlined in black and orange-shaded density contours representing crime distribution. Darker orange areas indicate higher crime density, while lighter areas show lower crime concentrations. The visualization, created using kernel density estimation, is based on a 10% random sample of the dataset to manage computational complexity and highlight crime hotspots effectively.
+
+\vspace{12pt} 
+
+```{r fig15, fig.cap="Spatial Distribution of Crime Density Across Districts", fig.height = 8, fig.width = 8}
+# Randomly sample 10% of the data 
+set.seed(123)  # Set seed for reproducibility
+df_sample <- df[sample(nrow(df), size = 0.1 * nrow(df)), ]
+
+# Calculate centroids for each polygon (district)
+boundary_centroids <- boundary %>%  st_centroid() 
+
+# Plot the crime density and district boundaries with centroids for labeling
+ggplot(df_sample, aes(x = Lon, y = Lat)) +
+  stat_density_2d(geom = "polygon", contour = TRUE,
+                  aes(fill = after_stat(level)),
+                  bins = 12) +
+  # Add the district boundaries to the plot
+  geom_sf(data = boundary, color = "black", fill = "ivory2", alpha = 0.2, size = 1, inherit.aes = FALSE) +
+  # Add the district labels at centroids
+  geom_text(data = boundary_centroids, 
+            aes(x = st_coordinates(geometry)[, 1],  # Extract the longitude
+                y = st_coordinates(geometry)[, 2],  # Extract the latitude
+                label = DISTRICT_), 
+            size = 4, color = "red4") +  # Add the labels for each district
+  scale_fill_distiller(palette = "OrRd", direction = 1) +
+  labs(fill = "Density Level",
+       x = "Longitude",
+       y = "Latitude") +  
+  theme(legend.position = "right") +  # Position legend on the right
+  custom_theme
+
+# Remove the objects created to free up memory
+rm(df_sample, boundary_centroids)
+```
+\newpage
+
+Figure \@ref(fig:fig16) presents the distribution of crime categories across districts. Certain districts are showing heightened criminal activity across multiple crime types.
+
+\vspace{12pt} 
+
+```{r fig16, fig.cap="Number of Crimes by Crime Type and Districs", fig.height = 9.7, fig.width = 8}
+# Summarize the data and remove NA values
+df_summary <- df %>% 
+  group_by(crime_type, Dc_Dist) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+  filter(!is.na(crime_type))  
+
+ggplot(df_summary, aes(x = Dc_Dist, y = n, fill = n)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Districts", y = "Number of Crimes") +
+  scale_y_continuous(labels = comma) +
+  scale_fill_viridis(option = "viridis", direction = -1, guide = "none") +
+  facet_wrap(~ crime_type, scales = "free_y", nrow = 6, ncol = 1) +  # Create a separate plot for each district
+  scale_x_discrete(limits = unique(df_summary$Dc_Dist)) +  # Ensure all districts are shown on the x-axis 
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),  # More readable facet labels
+    strip.background = element_blank(),  # Remove background to make it look narrower
+    panel.spacing = unit(0.7, "lines"),  # Slightly increased spacing between panels
+    axis.text.x = element_text(size = 8),  
+    axis.text.y = element_text(size = 8)
+    ) +
+  custom_theme
+```
+
+**Crimes Against Public Order**: District 9 shows a notably high number of public order crimes compared to other districts, with a sharp peak at around 15,000 incidents. Other districts have relatively lower occurrences, with values ranging from around 2,000 to 10,000, showing a more uniform spread.
+
+\vspace{12pt} 
+
+**Drug and Alcohol-Related Crimes**: There is a significant spike in Districts 24 and 25, which both report over 20,000 incidents. Other districts, such as 19 and 22, also have elevated numbers at around 15,000 incidents. 
+
+\vspace{12pt} 
+
+**Other Offenses**: These crimes appear more evenly distributed, with Districts 15, 19, 22, and 24 reporting higher crime counts, reaching over 50,000 incidents.
+
+\vspace{12pt} 
+
+**Property Crimes**: District 09 stands out with over 100,000 property crimes, followed by District 15 with a significant count of around 85,000.
+
+\vspace{12pt} 
+
+**Violent Crimes**: District 15 again stands out, with a peak of around 19,000 violent crimes. Other districts, like 22 and 25, have elevated numbers, reaching over 16,000 incidents.
+
+\vspace{16pt} 
+
+Figure \@ref(fig:fig17) presents a heatmap illustrating the distribution of crime frequency across districts and Police Service Areas (PSAs). The x-axis displays the districts. The y-axis represents the PSAs, labeled alphabetically from A to Z, alongside numbers for PSAs 1 through 4.
+
+\vspace{12pt} 
+
+The color gradient, ranging from yellow (representing lower frequencies) to deep purple (indicating higher crime frequencies), clearly highlights disparities in crime rates between different districts and PSAs. Notably, the areas corresponding to districts 9, 15, 19, 22, 24 and 25 show concentrated areas of darker shades, particularly in lower PSAs, suggesting significantly higher crime rates in these districts. 
+
+\vspace{12pt} 
+
+Many of the higher-numbered PSAs exhibit lighter colors, indicating relatively fewer recorded incidents. Additionally, several gaps or light patches appear in specific PSA and district combinations, potentially reflecting regions with no reported data.
+
+```{r fig17, fig.cap="Heatmap of Number of Crimes by Districts and Police Service Area", fig.height = 10, fig.width = 8}
+# Summarize the data to get crime counts by Districts and Psa
+df_summary <- df %>%
+  group_by(Dc_Dist, Psa) %>%
+  summarise(Frequency = n(), .groups = 'drop') %>%
+  arrange(Psa)
+
+# Create a heatmap
+ggplot(df_summary, aes(x = Dc_Dist, y = Psa, fill = Frequency)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(option = "viridis", direction = -1, labels = comma) +  # Apply viridis palette
+  labs(x = "District Code",
+       y = "Police Service Area",
+       fill = "Number of Crimes") +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 10),
+        axis.text.x = element_text(hjust = 1)) + 
+  custom_theme
+
+
+# Remove the object created to free up memory
+rm(df_summary)
+```
+
+\newpage
+
+# Machine Learning Models
+The objective is to predict crime type based on historical patterns related to time and location, focusing specifically on the 10 most frequent crime categories. By limiting the analysis to the most common types, this approach addresses data imbalance, reducing the influence of rare crime types and enhancing model simplicity, predictive performance, and stability.
+
+1. Dependent Variable:
+      - The target variable consists of the 10 most frequently occurring crime types in the dataset.
+
+
+2. Independent Variables:
+      - Year: Crime occurrence year, ranging from 2006 to 2017.
+      - Month: Month of occurrence (1 to 12).
+      - Day: Day of the month on which the crime occurred (1 to 31).
+      - Hour: Hour of the day when the crime was reported (0 to 23).
+      - Weekday: Day of the week, from Monday to Sunday.
+      - Longitude (Lon): Longitude coordinate of the crime location. 
+      - Latitude (Lat): Latitude coordinate of the crime location.
+      - District: The district where the crime occurred.
+
+```{r machine}
+# Calculate the frequency of each crime type
+crime_freq <- df %>%
+  count(Text_General_Code) %>%
+  arrange(desc(n))  # Sort by frequency, highest first
+
+# Get the top 10 most frequent crimes
+top_10_crimes <- crime_freq %>%
+  top_n(10, n) %>%
+  pull(Text_General_Code)
+
+# Filter the dataset to include only the top 10 most frequent crimes and remove rows with NA values
+df_filtered <- df %>%
+  filter(Text_General_Code %in% top_10_crimes, !is.na(Lat) & !is.na(Lon) & !is.na(Text_General_Code)) %>%
+  mutate(
+    Text_General_Code = factor(Text_General_Code), 
+    weekday = as.integer(weekday),
+    month = as.integer(month),
+    Dc_Dist = as.integer(Dc_Dist)
+  ) %>%
+  select(Lat, Lon, Hour, day, weekday, month, year, Dc_Dist, Text_General_Code)
+```
+
+## Data Splitting Strategy
+To develop predictive models, the dataset was split into training and testing sets, with an 80/20 split. The training set, comprising 80% of the data, was further divided using an additional 80/20 split, resulting in 64% of the original data for training, 16% for validation, and 20% for testing.
+
+\vspace{12pt} 
+
+This approach offered several advantages. The validation set enabled effective hyperparameter tuning, optimizing model performance while minimizing overfitting. Testing various configurations on the validation set allowed for selecting the best parameter values. Additionally, when comparing models (e.g., Decision Tree, Random Forest), the validation set provided an unbiased basis for performance assessment, facilitating a fair comparison in selecting the most accurate model for crime type prediction. By reserving the test set solely for final evaluation, the model's ability to generalize was thoroughly tested on unseen data, ensuring reliable and realistic insights into its real-world performance.
+
+```{r splitting}
+# Split the data into training (80%) and testing (20%) sets
+set.seed(123)  # For reproducibility
+trainIndex <- createDataPartition(df_filtered$Text_General_Code, p = 0.8, list = FALSE)
+trainData <- df_filtered[trainIndex, ]
+testData <- df_filtered[-trainIndex, ]
+
+# Further split the training data into training and validation sets (80/20 split of the training set)
+set.seed(123)  # For reproducibility
+trainIndex2 <- createDataPartition(trainData$Text_General_Code, p = 0.8, list = FALSE)
+trainData_raw <- trainData[trainIndex2, ]   # 64% of original data
+validationData <- trainData[-trainIndex2, ]   # 16% of original data
+
+# Remove the unnecessary objects to free up memory
+rm(df)
+rm(df_filtered)
+rm(trainData)
+```
+
+## Handling Class Imbalance: SMOTE Application
+Exploratory data analysis revealed a notable class imbalance in the dataset, with certain crime types occurring far more frequently than others. This imbalance poses a risk of model bias, as the model could become predisposed to the more common categories, resulting in higher accuracy for these classes while potentially underperforming on the less frequent crime types. To address this issue, the Synthetic Minority Over-sampling Technique (SMOTE) was applied to generate synthetic examples for the minority classes, creating a more balanced dataset.
+
+\vspace{12pt}
+
+In the subsequent analysis, models will be trained on both the original (imbalanced) dataset and the SMOTE-transformed dataset. This approach aims to assess the impact of class balancing on model performance across crime types.
+ 
+```{r smote}
+# Create a recipe with SMOTE and apply it to the training data only (trainData_raw)
+trainData_final <- recipe(Text_General_Code ~ ., data = trainData_raw) %>%
+  step_smote(Text_General_Code) %>%
+  prep() %>%
+  bake(new_data = NULL)
+```
+
+## Model Training and Validation
+
+### Model 1a: Decision Tree Model (Original Data)
+```{r model1}
+# Train the Decision Tree model on the original training data
+m1a <- rpart(Text_General_Code ~ ., data = trainData_raw) 
+
+# Predict on the validation data 
+pred_m1a <- predict(m1a, validationData, type = "class")
+
+# Evaluate the model on the validation set
+cm_m1a <- confusionMatrix(pred_m1a, validationData$Text_General_Code)
+
+# Print overall statistics on validation set
+# print(cm_m1a$overall)
+
+# Remove the objects created to free up memory
+rm(m1a, pred_m1a)
+```
+The Decision Tree model, trained on the original imbalanced dataset, achieved the following performance metrics:
+
+- Accuracy: The model achieved an accuracy of 26.04%, meaning it correctly predicted the class for approximately 26% of cases. Although this is slightly better than random guessing (which would yield around 10% accuracy in a 10-class classification problem), the model's performance is still quite limited.
+
+- Kappa: The Kappa statistic was 5.80%, suggesting that the model's predictions exhibit only minimal agreement with the true labels beyond what would be expected by chance.
+
+- Confidence Interval for Accuracy: The 95% confidence interval for accuracy ranged from 25.88% to 26.20%. This narrow range indicates stable, but low, model performance.
+
+- Accuracy Null: The null accuracy represents the accuracy achieved by always predicting the most common class. Here, the null accuracy is around 23.65%. The model’s accuracy (26.04%) is only slightly better than if it were predicting solely the majority class.
+
+- Accuracy *p* Value:  The accuracy p-value was \(1.152422 \times 10^{-200}\), indicating that the model's accuracy is statistically significant compared to random guessing.
+
+Overall, these results indicate that the model trained on the original dataset may struggle to accurately classify minority classes, highlighting the need for further refinement.
+
+### Model 1b: Decision Tree Model with SMOTE-Enhanced Data
+```{r model1b}
+# Train the Decision Tree model on the final training data (trainData_final)
+m1b <- rpart(Text_General_Code ~ ., data = trainData_final) 
+
+# Predict on the validation data for tuning/evaluation purposes
+pred_m1b <- predict(m1b, validationData, type = "class")
+
+# Evaluate the model on the validation set
+cm_m1b <- confusionMatrix(pred_m1b, validationData$Text_General_Code)
+
+# Print overall statistics on validation set
+# print(cm_m1b$overall)
+
+# Remove the objects created to free up memory
+rm(m1b, pred_m1b)
+```
+The Decision Tree model, trained on the SMOTE-transformed data, achieved the following performance metrics:
+
+- Accuracy: The model achieved an accuracy of 21.39%, meaning it correctly predicted the class for approximately 21% of cases.
+
+- Kappa: The Kappa statistic was 11.59%, suggesting that the model’s predictions exhibit only minimal agreement with the true labels beyond what would be expected by chance.
+
+- Confidence Interval for Accuracy: The 95% confidence interval for accuracy ranged from 21.24% to 21.54%.
+
+- Accuracy Null: The null accuracy is around 23.65%, which is actually higher than the model’s actual accuracy of 21.39%.
+
+- Accuracy *p* Value:  The p-value for accuracy is 1, indicating that the model’s performance is not significantly better than random guessing.
+
+After training and evaluating models on both the original (imbalanced) and SMOTE-transformed datasets, results indicated that models trained on the original, imbalanced dataset performed better, achieving higher accuracy compared to those trained on the SMOTE-transformed data.
+
+
+### Model 1c: Tuned Decision Tree Model (Original Data)
+```{r model1c}
+# Define train control for cross-validation
+train_control <- trainControl(method = "cv", number = 5, verboseIter = FALSE)
+
+# Train a Decision Tree model with tuning
+m1c <- train(
+  Text_General_Code ~ ., 
+  data = trainData_raw, 
+  method = "rpart", 
+  trControl = train_control,
+  tuneGrid = expand.grid(cp = seq(0.0005, 0.005, by = 0.0005))  # Tune the complexity parameter (cp)
+)
+
+# Predict on validation data for evaluation
+pred_m1c <- predict(m1c, validationData)
+
+# Evaluate the model on the validation set
+cm_m1c <- confusionMatrix(pred_m1c, validationData$Text_General_Code)
+
+# View the best cp value chosen
+# print(m1c$bestTune)
+
+# Print overall statistics on validation set
+# print(cm_m1c$overall)
+
+# Remove the objects created to free up memory
+rm(m1c, pred_m1c, train_control)
+```
+
+To improve Model 1a’s performance, hyperparameter tuning was conducted by adjusting the complexity parameter (cp), which controls the depth of the decision tree to help prevent overfitting. An initial range of cp values from 0.001 to 0.1, incrementing by 0.005, indicated that smaller cp values produced better results. Based on this finding, the tuning search was refined to focus on a range from 0.0005 to 0.005 with increments of 0.0005, ultimately identifying 0.0005 as the optimal cp value.
+
+\vspace{12pt} 
+
+Model 1c (Tuned Decision Tree Model), using cp = 0.0005, was then evaluated through cross-validation, resulting in the following performance metrics:
+
+- Accuracy: The model achieved an accuracy of approximately 30.10%, indicating a modest improvement over the initial results.   
+
+- Kappa: The Kappa statistic was %14.88, showing minimal but increased agreement between the model predictions and true labels beyond random chance.
+
+- Confidence Interval for Accuracy: The 95% confidence interval for accuracy ranged from 29.94% to 30.27%.
+
+- Accuracy Null: The null accuracy was 23.65%, slightly lower than the model's actual accuracy, confirming that the tuned model provides a marginal advantage over always predicting the most common class.
+
+- Accuracy *p* Value: With an exceptionally low p-value, the model’s performance is statistically significant, indicating better-than-random results.
+
+These results indicate that, while tuning has modestly improved the Decision Tree model’s performance, it still struggles with predictive accuracy and remains only marginally better than a majority-class prediction strategy.
+
+### Model 2a: Random Forest Model (Original Data)
+```{r model2a}
+# Set seed for reproducibility
+set.seed(123)
+
+# Train the Random Forest model
+m2a <- randomForest(Text_General_Code ~ ., data = trainData_raw, ntree = 50)
+
+# Predict on the validation data
+pred_m2a <- predict(m2a, validationData)
+
+# Evaluate the model on the validation set
+cm_m2a <- confusionMatrix(pred_m2a, validationData$Text_General_Code)
+
+# Print overall statistics on validation set
+# print(cm_m2a$overall)
+
+# Remove the objects created to free up memory
+rm(pred_m2a, trainData_raw)
+```
+
+In Model 2a, the Random Forest algorithm was employed, leveraging its strength as an ensemble method capable of handling complex, non-linear relationships and capturing intricate interactions among features. By averaging the results of multiple decision trees, Random Forest reduces the risk of overfitting, a common issue with individual decision trees. This approach resulted in a more robust and reliable model, with the following performance metrics:
+
+- Accuracy: The model achieved an accuracy of 36.91%
+
+- Kappa: The Kappa statistic was 25.01%, indicating a modest level of agreement beyond chance.
+
+- Confidence Interval for Accuracy: The 95% confidence interval for accuracy ranged from 36.74% to 37.09%, reflecting a stable model performance.
+
+- Accuracy Null: The null accuracy, which represents the accuracy of always predicting the most frequent class, was 23.65%.
+
+- Accuracy *p* Value:  The p-value for accuracy was 0, indicating that the model's performance is significantly better than random guessing.
+
+### Model 2b: Random Forest Model with SMOTE-Enhanced Data
+```{r model2b}
+# Set seed for reproducibility
+set.seed(123)
+
+# Train the Random Forest model
+m2b <- randomForest(Text_General_Code ~ ., data = trainData_final, ntree = 50)
+
+# Predict on the validation data
+pred_m2b <- predict(m2b, validationData)
+
+# Evaluate the model on the validation set
+cm_m2b <- confusionMatrix(pred_m2b, validationData$Text_General_Code)
+
+# Print overall statistics on validation set
+# print(cm_m2b$overall)
+
+# Remove the objects created to free up memory
+rm(m2b, pred_m2b, trainData_final, validationData)
+```
+
+In Model 2b, which utilized the Random Forest algorithm with SMOTE-enhanced data, the following performance metrics were observed:
+
+- Accuracy: The model achieved an accuracy of 35.49%, indicating that it correctly predicted the crime types approximately 35% of the time.
+
+- Kappa: The Kappa statistic was 24.78%, suggesting a modest level of agreement between the predicted and actual crime categories beyond what would be expected by chance.
+
+- Confidence Interval for Accuracy: The 95% confidence interval for accuracy ranged from 35.32% to 35.66%, reflecting a stable model performance.
+
+- Accuracy Null: The null accuracy, which represents the accuracy of always predicting the most frequent class, was 23.65%.
+
+- Accuracy *p* Value:  The p-value for accuracy was 0, indicating that the model's performance is significantly better than random guessing.
+
+## Model Comparison and Final Selection
+Table \@ref(tab:tab3) provides a comparison of performance metrics across all developed models. After assessing the performance of the five models, Model 2a, the Random Forest model trained on the original data, was selected as the final model. While SMOTE was applied in Model 2b to address class imbalance, it did not deliver a substantial improvement over the original model. Consequently, Model 2a was prioritized for its robust, reliable results without data augmentation, maintaining both data integrity and simplicity in model interpretation.
+```{r tab3}
+# Create a data frame with model performance metrics
+model_metrics <- data.frame(
+  Model = c("Model 1a", "Model 1b", "Model 1c", "Model 2a", "Model 2b"),
+  Description = c("Decision Tree", 
+                  "Decision Tree, SMOTE", 
+                  "Decision Tree, Tuned", 
+                  "Random Forest", 
+                  "Random Forest, SMOTE"),
+  Accuracy = c(cm_m1a$overall["Accuracy"], 
+               cm_m1b$overall["Accuracy"], 
+               cm_m1c$overall["Accuracy"], 
+               cm_m2a$overall["Accuracy"], 
+               cm_m2b$overall["Accuracy"]),
+  Kappa = c(cm_m1a$overall["Kappa"], 
+            cm_m1b$overall["Kappa"], 
+            cm_m1c$overall["Kappa"], 
+            cm_m2a$overall["Kappa"], 
+            cm_m2b$overall["Kappa"]),
+  Accuracy_Lower = c(cm_m1a$overall["AccuracyLower"], 
+                     cm_m1b$overall["AccuracyLower"], 
+                     cm_m1c$overall["AccuracyLower"], 
+                     cm_m2a$overall["AccuracyLower"], 
+                     cm_m2b$overall["AccuracyLower"]),
+  Accuracy_Upper = c(cm_m1a$overall["AccuracyUpper"], 
+                     cm_m1b$overall["AccuracyUpper"], 
+                     cm_m1c$overall["AccuracyUpper"], 
+                     cm_m2a$overall["AccuracyUpper"], 
+                     cm_m2b$overall["AccuracyUpper"]),
+  Accuracy_Null = c(cm_m1a$overall["AccuracyNull"], 
+                    cm_m1b$overall["AccuracyNull"], 
+                    cm_m1c$overall["AccuracyNull"], 
+                    cm_m2a$overall["AccuracyNull"], 
+                    cm_m2b$overall["AccuracyNull"]),
+  Accuracy_P_Value = c(cm_m1a$overall["AccuracyPValue"], 
+                       cm_m1b$overall["AccuracyPValue"], 
+                       cm_m1c$overall["AccuracyPValue"], 
+                       cm_m2a$overall["AccuracyPValue"], 
+                       cm_m2b$overall["AccuracyPValue"])
+)
+
+
+# Convert metrics to percentages and format with two decimal places
+model_metrics[, c("Accuracy", "Kappa", "Accuracy_Lower", "Accuracy_Upper", "Accuracy_Null")] <- 
+  lapply(model_metrics[, c("Accuracy", "Kappa", "Accuracy_Lower", "Accuracy_Upper", "Accuracy_Null")], function(x) round(x * 100, 2))
+
+# Print the comparison table using kable and kableExtra for styling
+kable(model_metrics, 
+      format = "latex",  
+      booktabs = TRUE, 
+      caption = "Comparison of Model Performance Metrics", 
+      linesep = "\\addlinespace[10pt]",
+      col.names = c("Model", "Description", "Accuracy (%)", "Kappa (%)", "Accuracy Lower (%)", "Accuracy Upper (%)", "Accuracy Null (%)", "Accuracy P-Value"), 
+      row.names = FALSE
+) %>%
+  kable_styling(
+    latex_options = c("HOLD_position"), 
+    stripe_color = "gray!15", 
+    font_size = 10, 
+ full_width = FALSE
+  ) %>%
+  row_spec(0, bold = TRUE) %>%  
+  column_spec(1, width = "1.5cm") %>%  
+  column_spec(2, width = "2.5cm") %>%    
+  column_spec(3, width = "1.5cm") %>%    
+  column_spec(4, width = "1.3cm") %>%    
+  column_spec(5, width = "1.5cm") %>%  
+  column_spec(6, width = "1.5cm") %>%    
+  column_spec(7, width = "1.5cm") %>%   
+  column_spec(8, width = "1.5cm")  
+
+# Remove the objects created to free up memory
+rm(cm_m1a, cm_m1b, cm_m1c, cm_m2b)
+```
+
+### Variable Importance
+Random Forest provides feature importance scores, highlighting the variables that most affect crime type prediction. Figure \@ref(fig:fig18) shows these values based on Model 2a. The MeanDecreaseGini scores indicate which features are most important, with higher values reflecting greater influence on the model’s predictions. The analysis reveals that geographic location (latitude and longitude) plays the largest role in predicting crime types.
+
+\vspace{12pt} 
+
+```{r fig18, fig.cap="Feature Importance for Model 2a", fig.height = 3.8, fig.width = 8}
+# Extract variable importance data and rename row names
+importance_df <- as.data.frame(importance(m2a))
+rownames(importance_df) <- c(
+  "Latitude", "Longitude", "Hour", "Day",
+  "Weekday", "Month", "Year", "District"
+)
+
+importance_df$Variable <- rownames(importance_df)
+rownames(importance_df) <- NULL
+
+# Plot with ggplot2 and align variable names to the left
+ggplot(importance_df, aes(x = MeanDecreaseGini, y = reorder(Variable, MeanDecreaseGini))) + 
+  geom_point(color = "deepskyblue2", size = 4) +  
+  labs(x = "Mean Decrease in Gini", y = "") +
+  scale_x_continuous(labels = scales::comma) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.title.x = element_text(face = "plain", size = 12),
+    axis.text.y = element_text(hjust = 0),
+    panel.border = element_rect(color = "gray30", fill = NA) 
+  )
+```
+
+
+## Final Model Performance and Generalization 
+```{r finaltest}
+# Predict on the test set using the best model (based on validation results)
+pred_test <- predict(m2a, testData)
+
+# Evaluate on the test set
+cm_test <- confusionMatrix(pred_test, testData$Text_General_Code)
+
+# Print overall statistics on test set
+# print(cm_test$overall)
+```
+When evaluated on the test set, the model demonstrated an accuracy of **36.90%**, reflecting its ability to correctly predict approximately 37% of crime instances. The Kappa statistic was **24.99%**, indicating a moderate level of agreement between the predicted and actual crime categories, beyond what would be expected by chance. The confidence intervals for accuracy range from **36.74% to 37.05%**, providing further insight into the model’s stability and consistency across different test data subsets.
+
+\vspace{12pt}
+
+The class-wise metrics for Model 2a are summarized in Table \@ref(tab:tab4), which provides important performance indicators for each crime type. These metrics, including sensitivity, specificity, and F1-score, offer a detailed view of how well the model performs across different crime categories. Areas with lower sensitivity or specificity could indicate challenges in classifying specific crime types, which might be due to insufficient data.
+
+\vspace{12pt} 
+
+```{r tab4}
+# Select important metrics and convert to data frame with Class label
+class_metrics <- as.data.frame(cm_test$byClass[, c("Sensitivity", "Specificity", "Precision", "F1", "Balanced Accuracy", "Prevalence")])
+
+class_metrics$Class <- rownames(class_metrics)  # Add 'Class' column
+
+# Reorder by 'Prevalence' and select columns in desired order
+class_metrics <- class_metrics[order(-class_metrics$Prevalence), c("Class", "Sensitivity", "Specificity", "Precision", "F1", "Balanced Accuracy", "Prevalence")]
+
+# Remove the "Class:" label from the row names and update
+class_metrics$Class <- gsub("Class: ", "", class_metrics$Class)
+
+# Convert metrics to percentages and format with two decimal places
+class_metrics[ , -1] <- lapply(class_metrics[ , -1], function(x) round(x * 100, 2))
+
+# Print the class-wise metrics table using kable and kableExtra for styling
+kable(class_metrics, 
+    format = 'latex', 
+    booktabs = TRUE, 
+    caption = "Class-Wise Metrics for Model 2a",
+    linesep = "\\addlinespace[10pt]",
+    row.names = FALSE,
+    col.names = c("Class", "Sensitivity (%)", "Specificity (%)", "Precision (%)", "F1 (%)", "Balanced Accuracy (%)", "Prevalence (%)")
+  ) %>%
+  kable_styling(
+    latex_options = c("HOLD_position"),
+    position = "left",
+    stripe_color = "gray!15",
+    font_size = 10,
+ full_width = FALSE
+  ) %>%
+  row_spec(0, bold = TRUE) %>%  
+  column_spec(1, width = "4.5cm") %>%  
+  column_spec(2, width = "1.6cm") %>%    
+  column_spec(3, width = "1.6cm") %>%    
+  column_spec(4, width = "1.5cm") %>%    
+  column_spec(5, width = "1.2cm") %>%  
+  column_spec(6, width = "1.7cm") %>%    
+  column_spec(7, width = "1.5cm") 
+```
+
+The Sensitivity of the model, which measures the proportion of true positives, varies significantly across crime types, with “All Other Offenses” having the highest sensitivity at 71.06%, indicating that the model is better at identifying these crimes compared to others. In contrast, “Recovered Stolen Motor Vehicle” has the lowest sensitivity at 5.71%, suggesting that the model struggles to detect this crime type.
+
+\vspace{12pt} 
+
+Specificity, which measures the proportion of true negatives, is relatively high across all classes, with “Aggravated Assault No Firearm” showing the highest specificity at 99.52%, indicating that the model is good at correctly identifying non-occurrences of this crime.
+
+\vspace{12pt} 
+
+Precision, which reflects the proportion of positive predictions that are correct, ranges from a low of 20.31% for “Burglary Residential” to 48.50% for “All Other Offenses”. 
+
+\vspace{12pt} 
+
+The F1 score is a performance metric that combines precision and sensitivity (also known as recall) into a single value, providing a balanced measure of a model’s ability to correctly identify positive instances. “All Other Offenses” has the highest F1 score of 57.65%. On the other hand, “Recovered Stolen Motor Vehicle” has an F1 score of 8.88%, indicating poor performance.
+
+\vspace{12pt} 
+
+Balanced Accuracy, which accounts for both sensitivity and specificity, ranges from 52.24% for “Recovered Stolen Motor Vehicle” to 73.84% for “All Other Offenses”, showing that the model performs better in balancing true positive and true negative rates for the more prevalent crime types.
+
+\vspace{12pt} 
+
+Finally, Prevalence, which shows the proportion of each class in the data, is highest for “All Other Offenses” (23.65%) and decreases for less frequent classes such as “Aggravated Assault No Firearm” (3.72%), which is consistent with the imbalance observed in the dataset.
+
+\vspace{12pt} 
+
+In conclusion, the model performs better at identifying more frequent crimes, such as "All Other Offenses" and "Thefts", while struggling with less frequent crimes. 
+
+### Confusion Matrix
+The confusion matrix visualized in Figure \@ref(fig:fig19) illustrates the performance of Model 2a across different crime categories. Each cell in the matrix represents the frequency of predicted versus actual crime types, with the intensity of the red color indicating the prediction count. Diagonal cells, where predicted and actual labels match, indicate correctly classified instances. As can be seen in this figure, misclassification remains prevalent in certain lower-frequency classes, indicating areas where the model may be struggling, likely due to limited distinctiveness among categories. 
+```{r fig19, fig.cap="Confusion Matrix for Model 2a", fig.height = 10.5, fig.width = 8}
+# Convert the confusion matrix to a tidy data frame
+cm_data <- as.data.frame(cm_test$table)
+colnames(cm_data) <- c("Predicted", "Actual", "Freq")
+
+# Plot the confusion matrix using ggplot2
+ggplot(cm_data, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "gray80") +
+  geom_text(aes(label = Freq), color = "gray20", size = 3.5) +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme_minimal() +
+  labs(x = "Predicted Class",
+       y = "Actual Class") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Receiver Operating Characteristic (ROC) Curve
+Figure \@ref(fig:fig20) presents the Receiver Operating Characteristic (ROC) curve for the Random Forest model (Model 2a) on the test set, showcasing its performance in a multiclass classification scenario using the One-vs-Rest approach. Here, each class is evaluated individually by treating it as the positive class while considering all other classes as negative. The plot illustrates the model's ability to distinguish each class, with varying levels of Area Under the Curve (AUC) for each ROC curve. Overall, the model exhibits limited success in predicting certain classes effectively, indicating room for improvement in capturing distinct features across classes.
+
+\vspace{12pt} 
+
+```{r fig20, fig.cap="One-vs-Rest ROC Curves for Each Class", fig.height = 8.5, fig.width = 8}
+# Predict probabilities for the test set (needed for ROC curve)
+pred_prob <- predict(m2a, testData, type = "prob")
+
+# Calculate ROC curve for each class (in multiclass, ROC is computed for each class vs all)
+roc_curve <- multiclass.roc(testData$Text_General_Code, pred_prob)
+
+# Define your class labels
+classes <- levels(testData$Text_General_Code)
+
+# Plotting setup: create colors for each class curve for easy distinction
+colors <- rainbow(length(classes))
+
+# Create the empty plot with limits and labels
+plot(NULL, xlim = c(0, 1), ylim = c(0, 1), xlab = "1 - Specificity", ylab = "Sensitivity")
+abline(a = 0, b = 1, lty = 2, col = "gray")  # Add the diagonal line (random classifier)
+
+# Loop through each class to calculate and plot its one-vs-rest ROC curve
+for (i in seq_along(classes)) {
+  # Create a binary response for the current class
+  binary_response <- ifelse(testData$Text_General_Code == classes[i], 1, 0)
+
+  # Calculate the ROC curve for this class vs all others
+  roc_single <- roc(binary_response, pred_prob[, i])
+  
+  # Plot the first ROC curve
+  if (i == 1) {
+    plot(roc_single, col = colors[i], add = TRUE, legacy.axes = TRUE)
+  } else {
+    # For subsequent curves, use lines() to add them
+    lines(roc_single, col = colors[i], lwd = 2)
+  }
+}
+
+# Add a legend to the plot
+legend("bottomright", legend = classes, col = colors, lwd = 2)
+```
+
+\newpage
+
+# Discussion  
+This project aimed to explore, predict, and evaluate crime patterns in Philadelphia using machine learning and descriptive analytics. The key objectives were to explore trends in crime data, predict crime types, and evaluate the performance of the predictive model. Each of these objectives provided valuable insights into crime patterns, the effectiveness of machine learning in predicting crime types, and the factors that most influence the accuracy of crime classification.
+
+\vspace{12pt} 
+
+The first objective of the project was to investigate crime patterns in Philadelphia through descriptive analytics. By analyzing crime data across various dimensions—such as location, time, and crime type—we were able to identify several notable trends. For instance, certain areas of the city exhibited higher crime frequencies, which aligns with prior knowledge of urban crime distribution. Temporal patterns, such as increased crime rates during specific months or times of day, were also evident. These insights can inform city planners, law enforcement, and community leaders about areas and times that require increased attention and resources. However, the exploratory analysis also highlighted some limitations, including potential biases in the dataset and the need for more granular geographic data to better capture crime hotspots.
+
+\vspace{12pt} 
+
+The second objective was to develop a machine learning model to predict crime types based on factors such as time and location. Using features such as the time of day, day of the week, and geographic location, the model aimed to classify the type of crime. After training and tuning multiple models, Random Forest emerged as a strong performer in terms of predictive accuracy, providing valuable insights into the relationships between features and crime types. Notably, latitude and longitude were significant predictors, with certain crime types being more prevalent in specific neighborhoods.
+
+\vspace{12pt} 
+
+The third objective was to evaluate the performance of the predictive model and identify the key features contributing to accurate crime classification. The model’s performance was assessed using metrics such as accuracy, precision, recall, and F1 score, as well as more advanced techniques like ROC curves. The results indicated that the Random Forest model achieved a moderate level of accuracy, particularly for the more frequent crime types. However, its performance varied across different crime categories, with some classes being more difficult to predict than others.
+
+## Limitations
+A key limitation of this project was the computational constraints of the hardware used for model training and analysis. Due to limited processing power, the dataset was sampled when visualizing the spatial distribution of crime density across districts, and certain computationally demanding processes, such as extensive cross-validation for parameter tuning, were restricted. These constraints may have limited the full potential of the Random Forest model, which typically benefits from fine-tuning over large parameter grids to optimize its predictive capabilities. Future iterations could use more powerful hardware to conduct a comprehensive analysis, potentially enhancing model performance.
+
+# Conclusion  
+This project offered a comprehensive exploration of crime patterns in Philadelphia, showcasing the practical application of machine learning for predicting crime types. By leveraging the Random Forest model—chosen for its robustness and ability to capture complex feature interactions—I achieved reasonable accuracy across various crime types, particularly for more frequent categories. Looking ahead, refining the model through hyperparameter tuning, incorporating additional data, and experimenting with advanced techniques could further improve accuracy and support proactive crime prevention strategies.
+
+\vspace{12pt}
+
+Beyond refining predictive modeling techniques, this project provided an invaluable opportunity to address the challenges of working with large-scale data, developing models, and evaluating their real-world performance. This experience deepened my understanding of Random Forests, highlighting their strengths and limitations in tackling multiclass classification tasks.
+
+\vspace{12pt}
+
+The hands-on nature of this work also allowed me to apply and build upon the skills I developed through the Professional Certificate in Data Science. From data manipulation to predictive modeling and performance evaluation, I’ve grown significantly more confident in applying these techniques to practical problems. This process has been both challenging and fulfilling, reinforcing my passion for data science and its ability to uncover actionable insights.
+
+\vspace{12pt}
+
+Generative artificial intelligence tools, including ChatGPT (OpenAI, 2024), played a key role throughout the project. These tools enhanced efficiency by assisting with report drafting, clarifying concepts, and even troubleshooting occasional coding issues. By streamlining workflows and improving the clarity of analysis and presentation, they contributed meaningfully to the project’s goal of delivering effective and interpretable crime data analysis.
+
+\newpage
+
+# References
+
+1. Ahmed, M., Danti, A., Mohammed, M. A., Zeebaree, S. R., & Abdulkareem, K. H. (2021). *The role of machine learning algorithms for diagnosing diseases*. Journal of Applied Sciences, 13(5), 426–442. https://doi.org/10.3923/jas.2021.426.442
+
+1. Chainey, S., & Ratcliffe, J. (2013). *GIS and crime mapping*. Wiley.
+
+1. Daly, M., & Wilson, M. (2017). *Homicide: Foundations of human behavior*. Taylor & Francis.https://doi.org/10.4324/9780203789872 
+
+1. Kang, H., & Kang, J. (2017). *Prediction of crime occurrence from multi-modal data using deep learning*. PLoS ONE, 12(4), e0176244. https://doi.org/10.1371/journal.pone.0176244
+
+1. Malleson, N., & Andresen, M. A. (2016). An exploratory study of crime: Examining lived experiences of crime through socioeconomic, demographic, and physical characteristics. *Urban Science, 4*(5), 1-20. https://doi.org/10.3390/urbansci4010005 
+
+1. OpenAI. (2024). ChatGPT [Large language model]. https://chatgpt.com
+
+1. Perry, W. L., McInnis, B., Price, C. C., Smith, S. C., & Hollywood, J. S. (2013). *Predictive policing: The role of crime forecasting in law enforcement operations*. RAND Corporation.
+
+1. R Core Team. (2024). *R: A language and environment for statistical computing* (Version 4.4.1). R Foundation for Statistical Computing. https://www.r-project.org/ 
+
+1. RStudio Team. (2024). *RStudio: Integrated Development for R* (Version 2024.09.0). RStudio, PBC. https://posit.co/download/rstudio-desktop/
+
+1. Wikström, P. O. H., & Treiber, K. (2016). Social disadvantage and crime: A criminological puzzle. *American Behavioral Scientist, 60*(10), 1232-1259. https://doi.org/10.1177/0002764216657304
+
+
+
+
+
+
